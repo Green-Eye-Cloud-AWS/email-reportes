@@ -16,7 +16,7 @@ CHARSET = "utf-8"
 
 SENDER = os.getenv("SENDER")
 PNG_BUCKET = os.getenv("PNG_BUCKET")
-ADMIN_RECIPIENTS = os.getenv("ADMINS_EMAIL")
+ADMIN_RECIPIENTS = os.getenv("ADMIN_RECIPIENTS")
 VIEWER_EMAIL = os.getenv("VIEWER_EMAIL")
 VIEWER_PASS = os.getenv("VIEWER_PASS")
 
