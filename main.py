@@ -25,26 +25,31 @@ AVANCE_COSECHA_URL = os.getenv("AVANCE_COSECHA_URL")
 AVANCE_COSECHA_RECIPIENTS = os.getenv("AVANCE_COSECHA_RECIPIENTS") 
 
 
-def build_email(recipients, subject, body_text, body_html):
+def build_emails(recipients, subject, body_text, body_html):
     
-    new_email = MIMEMultipart("mixed")
-    new_email["From"] = SENDER
-    new_email["To"] = ", ".join(recipients)
-    new_email["Subject"] = subject
+    new_emails = []
     
-    msg_body = MIMEMultipart("alternative")
-    
-    if body_text is not None:
-        textpart = MIMEText(body_text.encode(CHARSET), "plain", CHARSET)
-        msg_body.attach(textpart)
+    for recipient in recipients:
+        new_email = MIMEMultipart("mixed")
+        new_email["From"] = SENDER
+        new_email["To"] = recipient
+        new_email["Subject"] = subject
         
-    if body_html is not None:
-        htmlpart = MIMEText(body_html.encode(CHARSET), "html", CHARSET)
-        msg_body.attach(htmlpart)
+        msg_body = MIMEMultipart("alternative")
+        
+        if body_text is not None:
+            textpart = MIMEText(body_text.encode(CHARSET), "plain", CHARSET)
+            msg_body.attach(textpart)
+            
+        if body_html is not None:
+            htmlpart = MIMEText(body_html.encode(CHARSET), "html", CHARSET)
+            msg_body.attach(htmlpart)
+        
+        new_email.attach(msg_body)
+        
+        new_emails.append(new_email)
     
-    new_email.attach(msg_body)
-    
-    return new_email
+    return new_emails
     
 
 def avance_de_cosecha(old_email):
@@ -85,9 +90,7 @@ def avance_de_cosecha(old_email):
     
     body_text = "Ingresar al reporte: {}".format(AVANCE_COSECHA_URL)
 
-    new_email = build_email(RECIPIENTS, SUBJECT, body_text, body_html)
-
-    return RECIPIENTS, new_email
+    return build_emails(RECIPIENTS, SUBJECT, body_text, body_html)
     
     
 def forward_to_admin(old_email, subject):
@@ -97,18 +100,16 @@ def forward_to_admin(old_email, subject):
     part = old_email.get_body("html")
     body_html = part.get_payload(decode=True).decode(encoding=part.get_content_charset()) 
 
-    new_email = build_email(RECIPIENTS, subject, None, body_html)
+    return build_emails(RECIPIENTS, subject, None, body_html)
      
-    return RECIPIENTS, new_email
-    
-    
-def send_email(recipients, raw_email):
+
+def send_email(raw_email):
     
     try:
         
         response =  ses.send_raw_email(
             Source=SENDER,
-            Destinations=recipients,
+            Destinations=[raw_email["To"]],
             RawMessage={
                 "Data": raw_email.as_string(),
             }
@@ -131,8 +132,11 @@ def lambda_handler(event, context):
     print(subject)
     
     if subject == AVANCE_COSECHA:
-        recipients, raw_email = avance_de_cosecha(old_email)
+        raw_emails = avance_de_cosecha(old_email)
     else:
-        recipients, raw_email = forward_to_admin(old_email, subject)
+        raw_emails = forward_to_admin(old_email, subject)
     
-    print(send_email(recipients, raw_email))
+    for raw_email in raw_emails:
+        print(send_email(raw_email))
+    
+    return 'Done!'
