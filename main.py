@@ -1,7 +1,11 @@
+import os
+import json
+import base64
+from datetime import datetime
+
 import boto3  # type: ignore
 from botocore.exceptions import ClientError  # type: ignore
-from datetime import datetime
-import os
+
 import email
 from email import policy
 from email.parser import BytesParser
@@ -11,14 +15,21 @@ from email.mime.text import MIMEText
 
 s3 = boto3.client("s3", region_name="us-east-1")
 ses = boto3.client("ses", region_name="us-east-1")
+secretsmanager = boto3.client("secretsmanager", region_name="us-east-1")
+
+get_secret_value_response = secretsmanager.get_secret_value(SecretId="reportes")
+secrets = get_secret_value_response['SecretString'] if 'SecretString' in get_secret_value_response else base64.b64decode(get_secret_value_response['SecretBinary'])
+secrets = json.loads(secrets)
 
 CHARSET = "utf-8"
 
 SENDER = os.getenv("SENDER")
-PNG_BUCKET = os.getenv("PNG_BUCKET")
+
 ADMIN_RECIPIENTS = os.getenv("ADMIN_RECIPIENTS")
+
+PNG_BUCKET = os.getenv("PNG_BUCKET")
 VIEWER_EMAIL = os.getenv("VIEWER_EMAIL")
-VIEWER_PASS = os.getenv("VIEWER_PASS")
+VIEWER_PASS = secrets.get("VIEWER_PASS")
 
 AVANCE_COSECHA = os.getenv("AVANCE_COSECHA")
 AVANCE_COSECHA_URL = os.getenv("AVANCE_COSECHA_URL") 
@@ -54,7 +65,7 @@ def build_emails(recipients, subject, body_text, body_html):
 
 def avance_de_cosecha(old_email):
     
-    RECIPIENTS = [email.strip() for email in AVANCE_COSECHA_RECIPIENTS.split(',')]
+    recipients = [email.strip() for email in AVANCE_COSECHA_RECIPIENTS.split(',')]
     
     SUBJECT = "Avance de cosecha"
 
@@ -90,18 +101,25 @@ def avance_de_cosecha(old_email):
     
     body_text = "Ingresar al reporte: {}".format(AVANCE_COSECHA_URL)
 
-    return build_emails(RECIPIENTS, SUBJECT, body_text, body_html)
+    return build_emails(recipients, SUBJECT, body_text, body_html)
     
     
 def forward_to_admin(old_email, subject):
     
-    RECIPIENTS = [email.strip() for email in ADMIN_RECIPIENTS.split(',')]
+    recipients = [email.strip() for email in ADMIN_RECIPIENTS.split(',')]
     
     part = old_email.get_body("html")
     body_html = part.get_payload(decode=True).decode(encoding=part.get_content_charset()) 
 
-    return build_emails(RECIPIENTS, subject, None, body_html)
+    return build_emails(recipients, subject, None, body_html)
      
+     
+def alerta(json_body):
+    
+    recipients = [email.strip() for email in ADMIN_RECIPIENTS.split(',')]
+    
+    return build_emails(recipients, json_body["subject"], None, json_body["html"])
+    
 
 def send_email(raw_email):
     
@@ -118,24 +136,37 @@ def send_email(raw_email):
     except ClientError as e:
         return e.response["Error"]["Message"]
     else:
-        return "Email sent! Message ID: {}".format(response["MessageId"])
+        return "Email sent to {}! Message ID: {}".format(raw_email["To"], response["MessageId"])
 
 def lambda_handler(event, context):
-
-    data = s3.get_object(Bucket=event["Records"][0]["s3"]["bucket"]["name"], Key=event["Records"][0]["s3"]["object"]["key"])
-    contents = data["Body"].read()
-    old_email = BytesParser(policy=policy.default).parsebytes(contents)
-
-    subject, encoding = email.header.decode_header(old_email.get("subject"))[0]
-    if isinstance(subject, bytes):
-        subject = subject.decode(encoding)
-    print(subject)
     
-    if subject == AVANCE_COSECHA:
-        raw_emails = avance_de_cosecha(old_email)
-    else:
-        raw_emails = forward_to_admin(old_email, subject)
+    print("Event:", event)
     
+    raw_emails = []
+    
+    if "Records" in event:
+        data = s3.get_object(Bucket=event["Records"][0]["s3"]["bucket"]["name"], Key=event["Records"][0]["s3"]["object"]["key"])
+        contents = data["Body"].read()
+        old_email = BytesParser(policy=policy.default).parsebytes(contents)
+    
+        subject, encoding = email.header.decode_header(old_email.get("subject"))[0]
+        if isinstance(subject, bytes):
+            subject = subject.decode(encoding)
+        print(subject)
+        
+        if subject == AVANCE_COSECHA:
+            raw_emails = avance_de_cosecha(old_email)
+        else:
+            raw_emails = forward_to_admin(old_email, subject)
+    elif "body" in event:
+
+        if not "headers" in event or event["headers"].get("secret") != secrets.get("aws_lambda_reportes_invoker_secret"):
+            return 'Unauthorized!'
+            
+        json_body = json.loads(event["body"])
+        
+        raw_emails = alerta(json_body)
+        
     for raw_email in raw_emails:
         print(send_email(raw_email))
     
