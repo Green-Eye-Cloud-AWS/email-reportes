@@ -68,7 +68,7 @@ def build_emails(recipients, subject, body_text, body_html, body_img=None):
         if body_img is not None:
             msgImage = MIMEImage(body_img)
             msgImage.add_header('Content-ID', '<image1>')
-            msgImage.add_header('Content-Disposition', "attachment; filename= dashboard.jpg")
+            msgImage.add_header('Content-Disposition', "attachment; filename=dashboard.jpg")
             email_root.attach(msgImage)
             
         new_emails.append(email_root)
