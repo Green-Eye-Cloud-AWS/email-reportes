@@ -1,16 +1,19 @@
 import os
 import json
 import base64
-from datetime import datetime
 
 import boto3  # type: ignore
 from botocore.exceptions import ClientError  # type: ignore
 
-import email
+from PIL import Image
+from io import BytesIO
+
+from email.header import decode_header
 from email import policy
 from email.parser import BytesParser
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 
 
 s3 = boto3.client("s3", region_name="us-east-1")
@@ -21,13 +24,13 @@ get_secret_value_response = secretsmanager.get_secret_value(SecretId="reportes")
 secrets = get_secret_value_response['SecretString'] if 'SecretString' in get_secret_value_response else base64.b64decode(get_secret_value_response['SecretBinary'])
 secrets = json.loads(secrets)
 
+
 CHARSET = "utf-8"
 
 SENDER = os.getenv("SENDER")
 
 ADMIN_RECIPIENTS = os.getenv("ADMIN_RECIPIENTS")
 
-PNG_BUCKET = os.getenv("PNG_BUCKET")
 VIEWER_EMAIL = os.getenv("VIEWER_EMAIL")
 VIEWER_PASS = secrets.get("VIEWER_PASS")
 
@@ -39,32 +42,48 @@ CAMIONES_RECHAZADOS = os.getenv("CAMIONES_RECHAZADOS")
 CAMIONES_RECHAZADOS_URL = os.getenv("CAMIONES_RECHAZADOS_URL") 
 CAMIONES_RECHAZADOS_RECIPIENTS = os.getenv("CAMIONES_RECHAZADOS_RECIPIENTS") 
 
-def build_emails(recipients, subject, body_text, body_html):
+
+def build_emails(recipients, subject, body_text, body_html, body_img=None):
     
     new_emails = []
     
     for recipient in recipients:
-        new_email = MIMEMultipart("mixed")
-        new_email["From"] = SENDER
-        new_email["To"] = recipient
-        new_email["Subject"] = subject
+        email_root = MIMEMultipart("related")
+        email_root["From"] = SENDER
+        email_root["To"] = recipient
+        email_root["Subject"] = subject
         
-        msg_body = MIMEMultipart("alternative")
+        msg_alternative = MIMEMultipart("alternative")
         
         if body_text is not None:
             textpart = MIMEText(body_text.encode(CHARSET), "plain", CHARSET)
-            msg_body.attach(textpart)
-            
+            msg_alternative.attach(textpart)
+
         if body_html is not None:
             htmlpart = MIMEText(body_html.encode(CHARSET), "html", CHARSET)
-            msg_body.attach(htmlpart)
+            msg_alternative.attach(htmlpart)
+            
+        email_root.attach(msg_alternative)
         
-        new_email.attach(msg_body)
-        
-        new_emails.append(new_email)
+        if body_img is not None:
+            msgImage = MIMEImage(body_img)
+            msgImage.add_header('Content-ID', '<image1>')
+            email_root.attach(msgImage)
+            
+        new_emails.append(email_root)
     
     return new_emails
+
+
+def convert_to_jpeg(payload):
     
+    img = Image.open(BytesIO(payload))
+    img = img.convert('RGB')
+    
+    with BytesIO() as f:
+        img.save(f, format='JPEG')
+        return f.getvalue()
+        
 
 def avance_de_cosecha(old_email):
     
@@ -72,21 +91,18 @@ def avance_de_cosecha(old_email):
     
     SUBJECT = "Avance de cosecha"
 
-    key = datetime.now().strftime("%Y%d%m%H%M%S.png")
-    
+    body_img = None
     for part in old_email.iter_attachments():
         filename = (part.get_filename())
         if filename == AVANCE_COSECHA + ".png":
-            s3.put_object(Body=part.get_payload(decode=True), Bucket=PNG_BUCKET, Key=key, ContentType="image/png")
+            body_img = convert_to_jpeg(part.get_payload(decode=True))
             break
-    
-    url_img = "https://{}.s3.amazonaws.com/{}".format(PNG_BUCKET, key)
     
     body_html = """
     <html>
         <head></head>
         <body>
-            <img width="540" src="{}" />
+            <img width="540" src="cid:image1" />
             <p>
                 <b>Usuario:</b> {}
             </p>
@@ -100,11 +116,11 @@ def avance_de_cosecha(old_email):
             </p>
         </body>
     </html>
-    """.format(url_img, VIEWER_EMAIL, VIEWER_PASS, AVANCE_COSECHA_URL)
+    """.format(VIEWER_EMAIL, VIEWER_PASS, AVANCE_COSECHA_URL)
     
     body_text = "Ingresar al reporte: {}".format(AVANCE_COSECHA_URL)
 
-    return build_emails(recipients, SUBJECT, body_text, body_html)
+    return build_emails(recipients, SUBJECT, body_text, body_html, body_img)
     
     
 def forward_to_admins(old_email, subject):
@@ -183,7 +199,7 @@ def lambda_handler(event, context):
         contents = data["Body"].read()
         old_email = BytesParser(policy=policy.default).parsebytes(contents)
     
-        subject, encoding = email.header.decode_header(old_email.get("subject"))[0]
+        subject, encoding = decode_header(old_email.get("subject"))[0]
         if isinstance(subject, bytes):
             subject = subject.decode(encoding)
         print(subject)
