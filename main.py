@@ -68,6 +68,7 @@ def build_emails(recipients, subject, body_text, body_html, body_img=None):
         if body_img is not None:
             msgImage = MIMEImage(body_img)
             msgImage.add_header('Content-ID', '<image1>')
+            msgImage.add_header('Content-Disposition', "attachment; filename= dashboard.jpg")
             email_root.attach(msgImage)
             
         new_emails.append(email_root)
@@ -120,6 +121,44 @@ def avance_de_cosecha(old_email):
     
     body_text = "Ingresar al reporte: {}".format(AVANCE_COSECHA_URL)
 
+    return build_emails(recipients, SUBJECT, body_text, body_html, body_img)
+    
+
+def test(old_email):
+
+    recipients = [email.strip() for email in ADMIN_RECIPIENTS.split(',')]
+    
+    SUBJECT = "Avance de cosecha"
+
+    body_img = None
+    for part in old_email.iter_attachments():
+        filename = (part.get_filename())
+        if filename == "test.png":
+            body_img = convert_to_jpeg(part.get_payload(decode=True))
+            break
+    
+    body_html = """
+    <html>
+        <head></head>
+        <body>
+            <img width="540" src="cid:image1" />
+            <p>
+                <b>Usuario:</b> {}
+            </p>
+            <p>
+                <b>Contraseña:</b> {}</br>
+            </p>
+            <p>
+                <b>
+                    <a href="{}">Ingresar al reporte</a>
+                </b>
+            </p>
+        </body>
+    </html>
+    """.format(VIEWER_EMAIL, VIEWER_PASS, AVANCE_COSECHA_URL)
+    
+    body_text = "Ingresar al reporte: {}".format(AVANCE_COSECHA_URL)
+    
     return build_emails(recipients, SUBJECT, body_text, body_html, body_img)
     
     
@@ -206,6 +245,8 @@ def lambda_handler(event, context):
         
         if subject == AVANCE_COSECHA:
             raw_emails = avance_de_cosecha(old_email)
+        elif subject == "Test":
+            raw_emails = test(old_email)
         else:
             raw_emails = forward_to_admins(old_email, subject)
     elif "body" in event:
