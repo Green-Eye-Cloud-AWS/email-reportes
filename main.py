@@ -35,6 +35,9 @@ AVANCE_COSECHA = os.getenv("AVANCE_COSECHA")
 AVANCE_COSECHA_URL = os.getenv("AVANCE_COSECHA_URL") 
 AVANCE_COSECHA_RECIPIENTS = os.getenv("AVANCE_COSECHA_RECIPIENTS") 
 
+CAMIONES_RECHAZADOS = os.getenv("CAMIONES_RECHAZADOS")
+CAMIONES_RECHAZADOS_URL = os.getenv("CAMIONES_RECHAZADOS_URL") 
+CAMIONES_RECHAZADOS_RECIPIENTS = os.getenv("CAMIONES_RECHAZADOS_RECIPIENTS") 
 
 def build_emails(recipients, subject, body_text, body_html):
     
@@ -79,7 +82,7 @@ def avance_de_cosecha(old_email):
     
     url_img = "https://{}.s3.amazonaws.com/{}".format(PNG_BUCKET, key)
     
-    body_html = """\
+    body_html = """
     <html>
         <head></head>
         <body>
@@ -104,7 +107,7 @@ def avance_de_cosecha(old_email):
     return build_emails(recipients, SUBJECT, body_text, body_html)
     
     
-def forward_to_admin(old_email, subject):
+def forward_to_admins(old_email, subject):
     
     recipients = [email.strip() for email in ADMIN_RECIPIENTS.split(',')]
     
@@ -112,9 +115,40 @@ def forward_to_admin(old_email, subject):
     body_html = part.get_payload(decode=True).decode(encoding=part.get_content_charset()) 
 
     return build_emails(recipients, subject, None, body_html)
-     
-     
-def alerta(json_body):
+
+
+def camiones_rechazados(json_body):
+
+    recipients = [email.strip() for email in CAMIONES_RECHAZADOS_RECIPIENTS.split(',')]
+
+    body_html = """
+    <html>
+        <head></head>
+        <body>
+            <div>
+                {}
+            </div>
+            <p>
+                <b>Usuario:</b> {}
+            </p>
+            <p>
+                <b>Contraseña:</b> {}</br>
+            </p>
+            <p>
+                <b>
+                    <a href="{}">Ingresar al reporte</a>
+                </b>
+            </p>
+        </body>
+    </html>
+    """.format(json_body["html"], VIEWER_EMAIL, VIEWER_PASS, CAMIONES_RECHAZADOS_URL)
+    
+    body_text = "Ingresar al reporte: {}".format(CAMIONES_RECHAZADOS_URL)
+
+    return build_emails(recipients, json_body["subject"], body_text, body_html)
+
+
+def alert_admins(json_body):
     
     recipients = [email.strip() for email in ADMIN_RECIPIENTS.split(',')]
     
@@ -157,7 +191,7 @@ def lambda_handler(event, context):
         if subject == AVANCE_COSECHA:
             raw_emails = avance_de_cosecha(old_email)
         else:
-            raw_emails = forward_to_admin(old_email, subject)
+            raw_emails = forward_to_admins(old_email, subject)
     elif "body" in event:
 
         if not "headers" in event or event["headers"].get("secret") != secrets.get("aws_lambda_reportes_invoker_secret"):
@@ -165,7 +199,10 @@ def lambda_handler(event, context):
             
         json_body = json.loads(event["body"])
         
-        raw_emails = alerta(json_body)
+        if json_body["subject"] == CAMIONES_RECHAZADOS:
+            raw_emails = camiones_rechazados(json_body)
+        else:
+            raw_emails = alert_admins(json_body)
         
     for raw_email in raw_emails:
         print(send_email(raw_email))
